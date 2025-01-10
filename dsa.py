@@ -1,7 +1,8 @@
 import random
-import helpers
+from helpers import get_prime_of_bit_length
 
 DSS_sets_of_length = [
+    (128, 16),
     (1024, 160),
     (2048, 224),
     (2024, 256),
@@ -10,18 +11,55 @@ DSS_sets_of_length = [
 
 
 def set_global_public_key():
+    global N
     # (L, N) = random.choice(DSS_sets_of_length)
     (L, N) = DSS_sets_of_length[0]
     global p
-    p = helpers.get_prime_of_bit_length(L)
     global q
-    q = helpers.get_prime_of_bit_length_that_divides(N, p - 1)
+    p = 0
+    q = 0
 
-    for h in range(2, p - 1):
-        if h**((p-1)/q) % p > 1:
-            global g
-            g = h*(p - 1)/q % p
+    p_list = []
+    q_list = []
+
+    p_list.append(get_prime_of_bit_length(L))
+
+    while p == 0:
+        # Try q
+        q_candidate = get_prime_of_bit_length(N, q_list)
+
+        for p_candidate in p_list:
+            if (p_candidate - 1) % q_candidate == 0:
+                p = p_candidate
+                q = q_candidate
+                break
+
+        if p != 0:
             break
+
+        q_list.append(q_candidate)
+
+        # Try p
+        p_candidate = get_prime_of_bit_length(L, p_list)
+
+        for q_candidate in q_list:
+            if (p_candidate - 1) % q_candidate == 0:
+                p = p_candidate
+                q = q_candidate
+                break
+
+        p_list.append(p_candidate)
+
+    # h = random.randint(2, p - 2)
+    h = 2
+    g_candidate = pow(h, int((p - 1) / q), p)
+
+    while g_candidate <= 1:
+        h = random.randint(2, p - 2)
+        g_candidate = pow(h, int((p - 1) / q), p)
+
+    global g
+    g = g_candidate
 
 
 def get_user_private_key():
@@ -29,22 +67,43 @@ def get_user_private_key():
 
 
 def get_user_public_key(private_key):
-    return g**private_key % p
+    return pow(g, private_key, p)
 
 
 def signing(message, private_key):
-    k = random.randint(1, q - 1)
-    r = (g**k % p) % q
-    s = (k**-1 * (hash(message) + private_key*r)) % q
+    r = 0
+    s = 0
+
+    while s == 0:
+        k = random.randint(1, q - 1)
+        r = pow(g, k, p) % q
+
+        if r == 0:
+            continue
+
+        s = (hash_N(message) + private_key*r) / k % q
 
     return message, r, s
 
 
 def verification(signed_message, public_key):
-    (message_prim, r_prim, s_prim) = signed_message
-    w = s_prim**-1 % q
-    u1 = (hash(message_prim) * w) % q
-    u2 = r_prim*w % q
-    v = ((g*u1*public_key*u2) % p) % q
+    (message, r, s) = signed_message
 
-    return r_prim == v
+    if not (0 < r < q and 0 < s < q):
+        return False
+
+    w = 1 / s % q
+    u1 = hash_N(message) * w % q
+    u2 = r * w % q
+    v = pow(g, u1) * pow(public_key, u2) % p % q
+
+    return v == r
+
+
+def hash_N(text):
+    hashed = hash(text)
+
+    while hashed > pow(2, N):
+        hashed = hashed // 2
+
+    return hashed
