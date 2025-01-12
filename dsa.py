@@ -1,76 +1,67 @@
 import random
 from helpers import get_prime_of_bit_length
+from hashlib import sha256
+from sympy import isprime
 
-DSS_sets_of_length = [
-    (128, 16),
-    (1024, 160),
-    (2048, 224),
-    (2024, 256),
-    (3072, 256)
-]
+DSS_SETS_OF_LENGTH = {
+    1: (1024, 160),
+    2: (2048, 224),
+    3: (2048, 256),
+    4: (3072, 256),
+}
+
+WARNINGS = {
+    'global_public_keys': 'You need to generate global public keys first.',
+    'user_private_key': 'You need to generate user private key first.',
+    'user_public_key': 'You need to generate user public key first.',
+    'sign_message': 'You should sign the message first',
+}
 
 
-def set_global_public_key():
+def set_global_public_key(set_index):
     global N
-    # (L, N) = random.choice(DSS_sets_of_length)
-    (L, N) = DSS_sets_of_length[0]
+    (L, N) = DSS_SETS_OF_LENGTH[set_index]
     global p
     global q
     p = 0
-    q = 0
 
-    p_list = []
-    q_list = []
-
-    p_list.append(get_prime_of_bit_length(L))
-
-    while p == 0:
-        # Try q
-        q_candidate = get_prime_of_bit_length(N, q_list)
-
-        for p_candidate in p_list:
-            if (p_candidate - 1) % q_candidate == 0:
-                p = p_candidate
-                q = q_candidate
-                break
-
-        if p != 0:
-            break
-
-        q_list.append(q_candidate)
-
-        # Try p
-        p_candidate = get_prime_of_bit_length(L, p_list)
-
-        for q_candidate in q_list:
-            if (p_candidate - 1) % q_candidate == 0:
-                p = p_candidate
-                q = q_candidate
-                break
-
-        p_list.append(p_candidate)
-
-    # h = random.randint(2, p - 2)
-    h = 2
-    g_candidate = pow(h, int((p - 1) / q), p)
-
-    while g_candidate <= 1:
-        h = random.randint(2, p - 2)
-        g_candidate = pow(h, int((p - 1) / q), p)
+    while not (isprime(p) and p.bit_length() == L):
+        q = get_prime_of_bit_length(N)
+        k = random.randint(2 ** (L - N - 1), 2 ** (L - N) - 1)
+        p = (k * q) + 1
 
     global g
-    g = g_candidate
+    g = 1
+
+    while g <= 1:
+        h = random.randint(2, p - 2)
+        g = pow(h, k, p)
 
 
 def get_user_private_key():
+    if 'q' not in globals():
+        raise Exception(WARNINGS['global_public_keys'])
+
     return random.randint(1, q - 1)
 
 
 def get_user_public_key(private_key):
+    if not ('g' in globals() and 'p' in globals()):
+        raise Exception(WARNINGS['global_public_keys'])
+
+    if private_key == 0:
+        raise Exception(WARNINGS['user_private_key'])
+
     return pow(g, private_key, p)
 
 
 def signing(message, private_key):
+    if not ('g' in globals() and 'p' in globals() and 'q' in globals()):
+        raise Exception(WARNINGS['global_public_keys'])
+
+    if private_key == 0:
+        raise Exception(WARNINGS['user_private_key'])
+
     r = 0
     s = 0
 
@@ -81,27 +72,39 @@ def signing(message, private_key):
         if r == 0:
             continue
 
-        s = (hash_N(message) + private_key*r) / k % q
+        s = pow(k, -1, q) * (H(message) + private_key*r) % q
 
-    return message, r, s
+    return {'message': message, 'r': r, 's': s}
 
 
 def verification(signed_message, public_key):
-    (message, r, s) = signed_message
+    if not ('g' in globals() and 'p' in globals() and 'q' in globals()):
+        raise Exception(WARNINGS['global_public_keys'])
+
+    if public_key == 0:
+        raise Exception(WARNINGS['user_public_key'])
+
+    if signed_message == {}:
+        raise Exception(WARNINGS['sign_message'])
+
+    (message, r, s) = (signed_message['message'], signed_message['r'], signed_message['s'])
 
     if not (0 < r < q and 0 < s < q):
         return False
 
-    w = 1 / s % q
-    u1 = hash_N(message) * w % q
+    w = pow(s, -1, q)
+    u1 = H(message) * w % q
     u2 = r * w % q
-    v = pow(g, u1) * pow(public_key, u2) % p % q
+    v = pow(g, u1, p) * pow(public_key, u2, p) % p % q
 
     return v == r
 
 
-def hash_N(text):
-    hashed = hash(text)
+def H(text):
+    text_bytes = str.encode(text)
+    hashed_bytes = sha256(text_bytes).digest()
+
+    hashed = int.from_bytes(hashed_bytes, 'big')
 
     while hashed > pow(2, N):
         hashed = hashed // 2
